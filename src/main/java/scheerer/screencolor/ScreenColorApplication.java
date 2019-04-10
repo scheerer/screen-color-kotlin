@@ -1,0 +1,101 @@
+package scheerer.screencolor;
+
+import lombok.Data;
+import lombok.ToString;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.context.annotation.Bean;
+import org.springframework.http.MediaType;
+import org.springframework.http.codec.ServerSentEvent;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.reactive.function.server.*;
+import reactor.core.publisher.Flux;
+
+import java.awt.*;
+import java.awt.image.BufferedImage;
+import java.time.Duration;
+import java.time.ZonedDateTime;
+import java.util.logging.Level;
+
+import static org.springframework.web.reactive.function.BodyInserters.fromServerSentEvents;
+import static org.springframework.web.reactive.function.server.RequestPredicates.GET;
+import static org.springframework.web.reactive.function.server.RouterFunctions.route;
+
+@SpringBootApplication
+@RestController
+@Slf4j
+public class ScreenColorApplication {
+
+	static {
+		System.setProperty("java.awt.headless", "false");
+	}
+
+	public static void main(String[] args) {
+		SpringApplication.run(ScreenColorApplication.class, args);
+	}
+
+    @Bean
+    RouterFunction routes() throws Exception {
+		Flux<ColorEvent> screenColors = screenColors().share();
+
+        return route(GET("/screen-color"), screenColorHandler(screenColors));
+	}
+
+	HandlerFunction<ServerResponse> screenColorHandler(Flux<ColorEvent> screenColors) {
+		return request -> ServerResponse.ok()
+				.contentType(MediaType.TEXT_EVENT_STREAM)
+				.body(fromServerSentEvents(Flux.from(screenColors).map(ScreenColorApplication::toSse)));
+	}
+
+	Flux<ColorEvent> screenColors() throws AWTException {
+		Robot robot = new Robot();
+		Dimension screenSize = Toolkit.getDefaultToolkit().getScreenSize();
+		return Flux.interval(Duration.ofMillis(300))
+				.map(aLong -> {
+					BufferedImage screenShot = robot.createScreenCapture(new Rectangle(screenSize));
+					int PIXELS = 10;
+					int screenShotWidth = screenShot.getWidth();
+					int screenShotHeight = screenShot.getHeight();
+
+					long sumr = 0, sumg = 0, sumb = 0;
+					int pixelsScanned = 0;
+					for (int x = 0; x < screenShotWidth; x += PIXELS) {
+						for (int y = 0; y < screenShotHeight; y += PIXELS) {
+							Color pixel = new Color(screenShot.getRGB(x, y));
+							sumr += pixel.getRed();
+							sumg += pixel.getGreen();
+							sumb += pixel.getBlue();
+
+							pixelsScanned++;
+						}
+					}
+
+					long redAvg = sumr / pixelsScanned;
+					long greenAvg = sumg / pixelsScanned;
+					long blueAvg = sumb / pixelsScanned;
+
+					return new ColorEvent(redAvg, greenAvg, blueAvg);
+				})
+				.log(log.getName(), Level.INFO);
+	}
+
+	static ServerSentEvent<ColorEvent> toSse(ColorEvent data) {
+		return ServerSentEvent.builder(data).build();
+	}
+
+	@Data
+	@ToString
+	public static class ColorEvent {
+		ZonedDateTime time = ZonedDateTime.now();
+		long red, green, blue;
+		String hexTriplet;
+
+		public ColorEvent(long red, long green, long blue) {
+			this.red = red;
+			this.green = green;
+			this.blue = blue;
+			this.hexTriplet = String.format("#%02x%02x%02x", red, green, blue);
+		}
+	}
+}
