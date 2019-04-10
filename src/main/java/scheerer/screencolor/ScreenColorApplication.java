@@ -36,51 +36,49 @@ public class ScreenColorApplication {
 	}
 
     @Bean
-    RouterFunction routes() throws Exception {
-		Flux<ColorEvent> screenColors = screenColors().share();
-
-        return route(GET("/screen-color"), screenColorHandler(screenColors));
+    RouterFunction routes() {
+        return route(GET("/screen-color"), request -> {
+			int interval = Integer.parseInt(request.queryParam("interval").orElse("1000"));
+			return ServerResponse.ok()
+					.contentType(MediaType.TEXT_EVENT_STREAM)
+					.body(fromServerSentEvents(Flux.from(screenColors(interval)).map(ScreenColorApplication::toSse)));
+		});
 	}
 
-	HandlerFunction<ServerResponse> screenColorHandler(Flux<ColorEvent> screenColors) {
-		return request -> ServerResponse.ok()
-				.contentType(MediaType.TEXT_EVENT_STREAM)
-				.body(fromServerSentEvents(Flux.from(screenColors).map(ScreenColorApplication::toSse)));
-	}
+	private Flux<ColorEvent> screenColors(int intervalMillis) {
+		try {
+			Robot robot = new Robot();
+			Dimension screenSize = Toolkit.getDefaultToolkit().getScreenSize();
+			return Flux.interval(Duration.ofMillis(intervalMillis))
+					.map(aLong -> {
+						BufferedImage screenShot = robot.createScreenCapture(new Rectangle(screenSize));
+						int pixelDensity = 10;
 
-	Flux<ColorEvent> screenColors() throws AWTException {
-		Robot robot = new Robot();
-		Dimension screenSize = Toolkit.getDefaultToolkit().getScreenSize();
-		return Flux.interval(Duration.ofMillis(300))
-				.map(aLong -> {
-					BufferedImage screenShot = robot.createScreenCapture(new Rectangle(screenSize));
-					int PIXELS = 10;
-					int screenShotWidth = screenShot.getWidth();
-					int screenShotHeight = screenShot.getHeight();
+						long sumr = 0, sumg = 0, sumb = 0;
+						int pixelsScanned = 0;
+						for (int x = 0; x < screenShot.getWidth(); x += pixelDensity) {
+							for (int y = 0; y < screenShot.getHeight(); y += pixelDensity) {
+								Color pixel = new Color(screenShot.getRGB(x, y));
+								sumr += pixel.getRed();
+								sumg += pixel.getGreen();
+								sumb += pixel.getBlue();
 
-					long sumr = 0, sumg = 0, sumb = 0;
-					int pixelsScanned = 0;
-					for (int x = 0; x < screenShotWidth; x += PIXELS) {
-						for (int y = 0; y < screenShotHeight; y += PIXELS) {
-							Color pixel = new Color(screenShot.getRGB(x, y));
-							sumr += pixel.getRed();
-							sumg += pixel.getGreen();
-							sumb += pixel.getBlue();
-
-							pixelsScanned++;
+								pixelsScanned++;
+							}
 						}
-					}
 
-					long redAvg = sumr / pixelsScanned;
-					long greenAvg = sumg / pixelsScanned;
-					long blueAvg = sumb / pixelsScanned;
-
-					return new ColorEvent(redAvg, greenAvg, blueAvg);
-				})
-				.log(log.getName(), Level.INFO);
+						long redAvg = sumr / pixelsScanned;
+						long greenAvg = sumg / pixelsScanned;
+						long blueAvg = sumb / pixelsScanned;
+						return new ColorEvent(redAvg, greenAvg, blueAvg);
+					})
+					.log(log.getName(), Level.INFO);
+		} catch (AWTException e) {
+			return Flux.never();
+		}
 	}
 
-	static ServerSentEvent<ColorEvent> toSse(ColorEvent data) {
+	private static ServerSentEvent<ColorEvent> toSse(ColorEvent data) {
 		return ServerSentEvent.builder(data).build();
 	}
 
@@ -91,7 +89,7 @@ public class ScreenColorApplication {
 		long red, green, blue;
 		String hexTriplet;
 
-		public ColorEvent(long red, long green, long blue) {
+		ColorEvent(long red, long green, long blue) {
 			this.red = red;
 			this.green = green;
 			this.blue = blue;
