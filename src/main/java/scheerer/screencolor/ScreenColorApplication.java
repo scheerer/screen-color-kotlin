@@ -27,73 +27,73 @@ import static org.springframework.web.reactive.function.server.RouterFunctions.r
 @Slf4j
 public class ScreenColorApplication {
 
-	static {
-		System.setProperty("java.awt.headless", "false");
-	}
+    static {
+        System.setProperty("java.awt.headless", "false");
+    }
 
-	public static void main(String[] args) {
-		SpringApplication.run(ScreenColorApplication.class, args);
-	}
+    public static void main(String[] args) {
+        SpringApplication.run(ScreenColorApplication.class, args);
+    }
 
     @Bean
     RouterFunction routes() {
         return route(GET("/screen-color"), request -> {
-			int interval = Integer.parseInt(request.queryParam("interval").orElse("1000"));
-			return ServerResponse.ok()
-					.contentType(MediaType.TEXT_EVENT_STREAM)
-					.body(fromServerSentEvents(Flux.from(screenColors(interval)).map(ScreenColorApplication::toSse)));
-		});
-	}
+            int interval = Integer.parseInt(request.queryParam("interval").orElse("1000"));
+            return ServerResponse.ok()
+                    .contentType(MediaType.TEXT_EVENT_STREAM)
+                    .body(fromServerSentEvents(Flux.from(screenColors(interval)).map(ScreenColorApplication::toSse)));
+        });
+    }
 
-	private Flux<ColorEvent> screenColors(int intervalMillis) {
-		try {
-			Robot robot = new Robot();
-			Dimension screenSize = Toolkit.getDefaultToolkit().getScreenSize();
-			return Flux.interval(Duration.ofMillis(intervalMillis))
-					.map(aLong -> {
-						BufferedImage screenShot = robot.createScreenCapture(new Rectangle(screenSize));
-						int pixelDensity = 10;
+    private Flux<ColorEvent> screenColors(int intervalMillis) {
+        try {
+            Robot robot = new Robot();
+            Dimension screenSize = Toolkit.getDefaultToolkit().getScreenSize();
+            return Flux.interval(Duration.ofMillis(intervalMillis))
+                    .map(aLong -> {
+                        BufferedImage screenShot = robot.createScreenCapture(new Rectangle(screenSize));
+                        int pixelDensity = 10;
 
-						long sumr = 0, sumg = 0, sumb = 0;
-						int pixelsScanned = 0;
-						for (int x = 0; x < screenShot.getWidth(); x += pixelDensity) {
-							for (int y = 0; y < screenShot.getHeight(); y += pixelDensity) {
-								Color pixel = new Color(screenShot.getRGB(x, y));
-								sumr += pixel.getRed();
-								sumg += pixel.getGreen();
-								sumb += pixel.getBlue();
+                        long sumr = 0, sumg = 0, sumb = 0;
+                        int pixelsScanned = 0;
+                        for (int x = 0; x < screenShot.getWidth(); x += pixelDensity) {
+                            for (int y = 0; y < screenShot.getHeight(); y += pixelDensity) {
+                                Color pixel = new Color(screenShot.getRGB(x, y));
+                                sumr += pixel.getRed();
+                                sumg += pixel.getGreen();
+                                sumb += pixel.getBlue();
 
-								pixelsScanned++;
-							}
-						}
+                                pixelsScanned++;
+                            }
+                        }
 
-						long redAvg = sumr / pixelsScanned;
-						long greenAvg = sumg / pixelsScanned;
-						long blueAvg = sumb / pixelsScanned;
-						return new ColorEvent(redAvg, greenAvg, blueAvg);
-					})
-					.log(log.getName(), Level.INFO);
-		} catch (AWTException e) {
-			return Flux.never();
-		}
-	}
+                        long redAvg = sumr / pixelsScanned;
+                        long greenAvg = sumg / pixelsScanned;
+                        long blueAvg = sumb / pixelsScanned;
+                        return new ColorEvent(redAvg, greenAvg, blueAvg);
+                    })
+                    .log(log.getName(), Level.INFO);
+        } catch (AWTException e) {
+            return Flux.never();
+        }
+    }
 
-	private static ServerSentEvent<ColorEvent> toSse(ColorEvent data) {
-		return ServerSentEvent.builder(data).build();
-	}
+    private static ServerSentEvent<ColorEvent> toSse(ColorEvent data) {
+        return ServerSentEvent.builder(data).build();
+    }
 
-	@Data
-	@ToString
-	public static class ColorEvent {
-		ZonedDateTime time = ZonedDateTime.now();
-		long red, green, blue;
-		String hexTriplet;
+    @Data
+    @ToString
+    public static class ColorEvent {
+        ZonedDateTime time = ZonedDateTime.now();
+        long red, green, blue;
+        String hexTriplet;
 
-		ColorEvent(long red, long green, long blue) {
-			this.red = red;
-			this.green = green;
-			this.blue = blue;
-			this.hexTriplet = String.format("#%02x%02x%02x", red, green, blue);
-		}
-	}
+        ColorEvent(long red, long green, long blue) {
+            this.red = red;
+            this.green = green;
+            this.blue = blue;
+            this.hexTriplet = String.format("#%02x%02x%02x", red, green, blue);
+        }
+    }
 }
