@@ -41,6 +41,7 @@ class SharedFluxConfig {
 	fun screenColorFlux(screenShotService: ScreenShotService): Flux<ColorEvent> {
 		return screenShotService.screenShots(60)
 			.map { ColorEvent(it) }
+			.share()
 	}
 }
 
@@ -50,7 +51,6 @@ class WebRouter (private val screenColorFlux: Flux<ColorEvent>) {
 	@GetMapping("/screen-colors")
 	fun screenColors(): Flux<ServerSentEvent<ColorEvent>> {
 		return screenColorFlux.map { ServerSentEvent.builder(it).build() }
-
 	}
 }
 
@@ -66,7 +66,6 @@ constructor(private val executorService: ExecutorService) {
 			.flatMap({ captureScreen() }, 1) // Limit concurrency to 1
 			.limitRate(1) // Ensure no more than 1 per interval
 			.subscribeOn(Schedulers.fromExecutorService(executorService)) // Use a scheduler that can handle blocking operations
-			.share()
 	}
 
 	fun captureScreen(): Mono<BufferedImage> {
