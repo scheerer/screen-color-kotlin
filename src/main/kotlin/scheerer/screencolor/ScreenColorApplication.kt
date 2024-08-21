@@ -5,33 +5,45 @@ import org.slf4j.LoggerFactory
 import org.springframework.boot.Banner
 import org.springframework.boot.autoconfigure.SpringBootApplication
 import org.springframework.boot.runApplication
+import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.http.codec.ServerSentEvent
 import org.springframework.stereotype.Service
 import org.springframework.web.bind.annotation.GetMapping
-import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.reactive.config.CorsRegistry
 import org.springframework.web.reactive.config.EnableWebFlux
 import org.springframework.web.reactive.config.WebFluxConfigurer
 import reactor.core.publisher.Flux
+import reactor.core.publisher.Mono
+import reactor.core.scheduler.Schedulers
 import java.awt.*
 import java.awt.image.BufferedImage
 import java.time.Duration
-import java.util.logging.Level
 import kotlin.math.sqrt
+
 
 inline fun <reified T> logger(): Logger {
 	return LoggerFactory.getLogger(T::class.java)
 }
 
+@Configuration
+class SharedFluxConfig {
+
+	@Bean
+	fun screenColorFlux(screenShotService: ScreenShotService): Flux<ColorEvent> {
+		return screenShotService.screenShots(60)
+			.map { ColorEvent(it) }
+	}
+}
+
 @RestController
-class WebRouter (val screenShotService: ScreenShotService) {
+class WebRouter (private val screenColorFlux: Flux<ColorEvent>) {
+
 	@GetMapping("/screen-colors")
-	fun screenColors(@RequestParam(name = "interval", defaultValue = "1000") interval: Int): Flux<ServerSentEvent<ColorEvent>> {
-		return screenShotService.screenShots(interval)
-				.map { ColorEvent(it) }
-				.map { ServerSentEvent.builder(it).build() }
+	fun screenColors(): Flux<ServerSentEvent<ColorEvent>> {
+		return screenColorFlux.map { ServerSentEvent.builder(it).build() }
+
 	}
 }
 
@@ -39,12 +51,31 @@ class WebRouter (val screenShotService: ScreenShotService) {
 class ScreenShotService @Throws(AWTException::class)
 constructor() {
 	private val awtRobot: Robot = Robot()
-	private val screenSize: Dimension = Toolkit.getDefaultToolkit().screenSize
+	private val screenRect = Rectangle(Toolkit.getDefaultToolkit().screenSize)
 
-	fun screenShots(intervalMillis: Int): Flux<BufferedImage> {
-		return Flux.interval(Duration.ofMillis(intervalMillis.toLong()))
-				.map { awtRobot.createScreenCapture(Rectangle(screenSize)) }
-				.share()
+	fun screenShots(fps: Int): Flux<BufferedImage> {
+		return Flux.interval(Duration.ofMillis((1000 / fps).toLong()))
+			.onBackpressureLatest() // Only keep the latest value if we can't keep up
+			.flatMap({ captureScreen() }, 1) // Limit concurrency to 1
+			.limitRate(1) // Ensure no more than 1 per interval
+			.subscribeOn(Schedulers.boundedElastic()) // Use a scheduler that can handle blocking operations
+			.share()
+	}
+
+	fun captureScreen(): Mono<BufferedImage> {
+		return Mono.fromCallable {
+			try {
+				val startTime = System.currentTimeMillis()
+				val img = awtRobot.createScreenCapture(screenRect)
+				val captureLatencyMs = System.currentTimeMillis() - startTime
+				logger<Logger>().info("Screen capture latency: {}", captureLatencyMs)
+
+				img
+			} catch (e: AWTException) {
+				println("Failed to capture screen: ${e.message}")
+				null
+			}
+		}
 	}
 }
 
@@ -53,12 +84,9 @@ data class Color(val red: Int, val green: Int, val blue: Int) {
 }
 
 class ColorEvent(image: BufferedImage) {
-	val algorithmResults: Map<String, Color> = ColorFinder.getColors(image)
-	val color: Color
-
-	init {
-		this.color = algorithmResults["squaredAvgRgb"] ?: error("Couldn't find the algorithm result!") // probably should have an enum I guess
-	}
+	private val algorithmResults: Map<String, Color> = ColorFinder.getColors(image)
+	val color: Color =
+		algorithmResults["squaredAvgRgb"] ?: error("Couldn't find the algorithm result!") // probably should have an enum I guess
 }
 
 @Configuration
