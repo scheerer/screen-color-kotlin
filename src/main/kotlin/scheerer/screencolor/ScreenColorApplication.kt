@@ -20,6 +20,8 @@ import reactor.core.scheduler.Schedulers
 import java.awt.*
 import java.awt.image.BufferedImage
 import java.time.Duration
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import kotlin.math.sqrt
 
 
@@ -29,6 +31,11 @@ inline fun <reified T> logger(): Logger {
 
 @Configuration
 class SharedFluxConfig {
+
+	@Bean
+	fun executorService(): ExecutorService {
+		return Executors.newVirtualThreadPerTaskExecutor()
+	}
 
 	@Bean
 	fun screenColorFlux(screenShotService: ScreenShotService): Flux<ColorEvent> {
@@ -49,7 +56,7 @@ class WebRouter (private val screenColorFlux: Flux<ColorEvent>) {
 
 @Service
 class ScreenShotService @Throws(AWTException::class)
-constructor() {
+constructor(private val executorService: ExecutorService) {
 	private val awtRobot: Robot = Robot()
 	private val screenRect = Rectangle(Toolkit.getDefaultToolkit().screenSize)
 
@@ -58,7 +65,7 @@ constructor() {
 			.onBackpressureLatest() // Only keep the latest value if we can't keep up
 			.flatMap({ captureScreen() }, 1) // Limit concurrency to 1
 			.limitRate(1) // Ensure no more than 1 per interval
-			.subscribeOn(Schedulers.boundedElastic()) // Use a scheduler that can handle blocking operations
+			.subscribeOn(Schedulers.fromExecutorService(executorService)) // Use a scheduler that can handle blocking operations
 			.share()
 	}
 
